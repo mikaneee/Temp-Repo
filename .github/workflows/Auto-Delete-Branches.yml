@@ -1,0 +1,52 @@
+name: Auto Delete Synced Branches
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  cleanup-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Temp-Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Git Credentials
+        env:
+          MAIN_REPO: ${{ secrets.MAIN_REPO }}
+          TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          if [ -z "$MAIN_REPO" ] || [ -z "$TOKEN" ]; then
+            echo "Error: Secret MAIN_REPO atau API_TOKEN tidak ditemukan!"
+            exit 1
+          fi
+
+          git remote add main_repo "https://x-access-token:${TOKEN}@github.com/${MAIN_REPO}.git"
+          
+          echo "Mengetes koneksi ke $MAIN_REPO..."
+          git ls-remote --heads main_repo > /dev/null || { echo "Gagal akses repo utama!"; exit 1; }
+          echo "Koneksi Berhasil!"
+
+      - name: Fetch and Sync Cleanup
+        env:
+          TOKEN: ${{ secrets.API_TOKEN }}
+        run: |
+          git fetch main_repo --prune
+          
+          # Menghindari 'main', 'HEAD', dan membersihkan prefix 'origin/'
+          git branch -r | grep 'origin/' | grep -v 'main' | grep -v 'HEAD' | sed 's/.*origin\///' | while read -r branch; do
+            
+            if git ls-remote --exit-code --heads main_repo "$branch" > /dev/null; then
+              echo "---------------------------------------------------"
+              echo "Branch '$branch' ditemukan di repo utama."
+              echo "Menghapus '$branch' dari mikaneee/Temp-Repo..."
+              
+              git push "https://x-access-token:${TOKEN}@github.com/mikaneee/Temp-Repo.git" --delete "$branch"
+            else
+              echo "Branch '$branch' unik (belum ada di repo utama). Lewati."
+            fi
+          done
