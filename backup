@@ -1,0 +1,1 @@
+gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
