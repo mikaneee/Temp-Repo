@@ -1,0 +1,84 @@
+name: Sync Manifest 3
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: Update-Manifest
+  cancel-in-progress: false
+  
+jobs:
+  sync-process:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout Current Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.API_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Git Config
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add Remotes and Fetch
+        env:
+          GH_TOKEN: ${{ secrets.API_TOKEN }}
+          PUBLIC_REPO: ${{ secrets.REPO_LF }}
+          MAIN_REPO: ${{ secrets.MAIN_REPO }}
+        run: |
+          git remote add source_repo "https://github.com/${PUBLIC_REPO}.git"
+          git fetch source_repo --prune --quiet
+          git branch -r | grep "source_repo/" | sed 's/source_repo\///' | tr -d ' ' | grep -v "HEAD" > public_branches.txt
+
+          git remote add target_repo "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
+          git fetch target_repo --prune
+          git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > existing_branches.txt
+
+          LIMIT=100
+          COUNT=0
+          
+          while IFS= read -r BRANCH; do
+            if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ] || [ $COUNT -ge $LIMIT ]; then continue; fi
+            
+            if grep -qx "$BRANCH" existing_branches.txt; then 
+              echo "Skip: $BRANCH sudah ada."
+              continue; 
+            fi
+
+            echo "Processing New Branch: $BRANCH"
+            FILE_URL="https://raw.githubusercontent.com/$PUBLIC_REPO/$BRANCH/$BRANCH.lua"
+            
+            TEMP_DIR="temp_$BRANCH"
+            mkdir -p "$TEMP_DIR"
+            
+            HTTP_STATUS=$(curl -s -L -o "$TEMP_DIR/$BRANCH.lua" -w "%{http_code}" "$FILE_URL")
+            
+            if [ "$HTTP_STATUS" -eq 200 ]; then
+              # BUAT BRANCH BARU DARI KOSONG (ORPHAN)
+              git checkout --orphan "$BRANCH"
+              git rm -rf . --quiet
+              
+              mv "$TEMP_DIR/$BRANCH.lua" .
+              git add "$BRANCH.lua"
+              git commit -m "Add $BRANCH.lua" --quiet
+              git push target_repo "$BRANCH" --force
+              
+              COUNT=$((COUNT+1))
+              echo "Berhasil Push: $BRANCH"
+            else
+              echo "Gagal download: $BRANCH (Status: $HTTP_STATUS)"
+            fi
+            
+            git checkout main -f
+            rm -rf "$TEMP_DIR"
+            
+          done < public_branches.txt
+
+          
