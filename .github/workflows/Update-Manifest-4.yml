@@ -33,9 +33,7 @@ jobs:
           PUBLIC_REPO: ${{ secrets.REPO_MG }}
           MAIN_REPO: ${{ secrets.MAIN_REPO }}
         run: |
-          git remote add source_repo "https://github.com/${PUBLIC_REPO}.git"
-          git fetch source_repo --prune --quiet
-          git branch -r | grep "source_repo/" | sed 's/source_repo\///' | tr -d ' ' | grep -v "HEAD" > public_branches.txt
+          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
 
           git remote add target_repo "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
           git fetch target_repo --prune
