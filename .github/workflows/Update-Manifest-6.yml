@@ -33,7 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.API_TOKEN }}
           PUBLIC_REPO: ${{ secrets.REPO_MANUAL }}
-          MAIN_REPO: ${{ secrets.MAIN_REPO }}
+          MAIN_REPO: ${{ secrets.REPO_MY }}
           API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
           gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > /tmp/public_branches.txt
