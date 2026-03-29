@@ -32,7 +32,7 @@ jobs:
           TARGET_REPO_PATH: ${{ secrets.REPO_MY }}
         run: |
           START_TIME=$(date +%s)
-          TIMEOUT=18000
+          TIMEOUT=17400 # 4 jam 50 menit (lebih aman)
 
           gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
 
@@ -42,18 +42,19 @@ jobs:
           git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > existing_branches.txt
 
           while IFS= read -r BRANCH; do
+            # Cek Durasi
             CURRENT_TIME=$(date +%s)
             ELAPSED=$((CURRENT_TIME - START_TIME))
             if [ $ELAPSED -ge $TIMEOUT ]; then
-              echo "Waktu hampir habis (5 jam). Memicu ulang workflow..."
-              gh workflow run "${{ github.workflow }}"
+              echo "Waktu hampir habis. Memicu ulang workflow..."
+              gh workflow run "Sync Manifest 6"
               exit 0
             fi
 
             if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ] || [ "$BRANCH" == "master" ]; then continue; fi
             
             if grep -qx "$BRANCH" existing_branches.txt; then 
-              echo "Skip: Branch $BRANCH sudah ada di target."
+              echo "Skip: $BRANCH sudah ada."
               continue; 
             fi
 
@@ -63,7 +64,14 @@ jobs:
             TEMP_DIR="temp_$BRANCH"
             mkdir -p "$TEMP_DIR"
 
-            FILES=$(gh api repos/$PUBLIC_REPO/contents/ --ref "$BRANCH" --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name')
+            # PERBAIKAN DI SINI: Menggunakan -f ref="$BRANCH"
+            FILES=$(gh api repos/$PUBLIC_REPO/contents/ -f ref="$BRANCH" --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name' 2>/dev/null || echo "")
+
+            if [ -z "$FILES" ]; then
+              echo "Tidak ada file .lua atau .manifest di branch $BRANCH"
+              rm -rf "$TEMP_DIR"
+              continue
+            fi
 
             DOWNLOAD_COUNT=0
             for FILE in $FILES; do
@@ -84,9 +92,7 @@ jobs:
               git add .
               git commit -m "Add files for $BRANCH" --quiet
               git push target_repo "$BRANCH" --force
-              echo "Berhasil Push Branch: $BRANCH dengan $DOWNLOAD_COUNT file."
-            else
-              echo "Tidak ada file valid ditemukan di branch $BRANCH."
+              echo "Berhasil Push: $BRANCH ($DOWNLOAD_COUNT file)"
             fi
             
             git checkout main -f
