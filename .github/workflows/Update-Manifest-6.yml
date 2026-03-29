@@ -1,0 +1,95 @@
+name: Sync Manifest 6
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  sync-process:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ secrets.MY_TOKEN }}
+
+    steps:
+      - name: Checkout Current Repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Git Config
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync and Push
+        env:
+          PUBLIC_REPO: ${{ secrets.REPO_MANUAL }}
+          TARGET_REPO_PATH: ${{ secrets.REPO_MY }}
+        run: |
+          START_TIME=$(date +%s)
+          TIMEOUT=18000
+
+          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
+
+          git remote add target_repo "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO_PATH}.git"
+          git fetch target_repo --prune
+          
+          git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > existing_branches.txt
+
+          while IFS= read -r BRANCH; do
+            CURRENT_TIME=$(date +%s)
+            ELAPSED=$((CURRENT_TIME - START_TIME))
+            if [ $ELAPSED -ge $TIMEOUT ]; then
+              echo "Waktu hampir habis (5 jam). Memicu ulang workflow..."
+              gh workflow run "${{ github.workflow }}"
+              exit 0
+            fi
+
+            if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ] || [ "$BRANCH" == "master" ]; then continue; fi
+            
+            if grep -qx "$BRANCH" existing_branches.txt; then 
+              echo "Skip: Branch $BRANCH sudah ada di target."
+              continue; 
+            fi
+
+            echo "--------------------------------------"
+            echo "Processing Branch: $BRANCH"
+            
+            TEMP_DIR="temp_$BRANCH"
+            mkdir -p "$TEMP_DIR"
+
+            FILES=$(gh api repos/$PUBLIC_REPO/contents/ --ref "$BRANCH" --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name')
+
+            DOWNLOAD_COUNT=0
+            for FILE in $FILES; do
+              FILE_URL="https://raw.githubusercontent.com/$PUBLIC_REPO/$BRANCH/$FILE"
+              HTTP_STATUS=$(curl -s -L -o "$TEMP_DIR/$FILE" -w "%{http_code}" "$FILE_URL")
+              
+              if [ "$HTTP_STATUS" -eq 200 ]; then
+                echo "Downloaded: $FILE"
+                DOWNLOAD_COUNT=$((DOWNLOAD_COUNT+1))
+              fi
+            done
+
+            if [ $DOWNLOAD_COUNT -gt 0 ]; then
+              git checkout --orphan "$BRANCH"
+              git rm -rf . --quiet
+              
+              mv "$TEMP_DIR"/* .
+              git add .
+              git commit -m "Add files for $BRANCH" --quiet
+              git push target_repo "$BRANCH" --force
+              echo "Berhasil Push Branch: $BRANCH dengan $DOWNLOAD_COUNT file."
+            else
+              echo "Tidak ada file valid ditemukan di branch $BRANCH."
+            fi
+            
+            git checkout main -f
+            rm -rf "$TEMP_DIR"
+            
+          done < public_branches.txt
