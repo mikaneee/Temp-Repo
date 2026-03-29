@@ -86,7 +86,7 @@ jobs:
               
               mv "$TEMP_DIR"/* .
               
-              git add *.lua *.manifest
+              git add .
               
               git commit -m "Add files for $BRANCH" --quiet
               git push target_repo "$BRANCH" --force
