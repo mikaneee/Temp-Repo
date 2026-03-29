@@ -33,14 +33,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.API_TOKEN }}
           PUBLIC_REPO: ${{ secrets.REPO_MANUAL }}
-          MAIN_REPO: ${{ secrets.REPO_MY }}
+          MAIN_REPO: ${{ secrets.MAIN_REPO }}
           API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
-          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
+          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > /tmp/public_branches.txt
 
           git remote add target_repo "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
           git fetch target_repo --prune
-          git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > existing_branches.txt
+          git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > /tmp/existing_branches.txt
 
           LIMIT=10
           COUNT=0
@@ -48,7 +48,7 @@ jobs:
           while IFS= read -r BRANCH; do
             if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ] || [ $COUNT -ge $LIMIT ]; then continue; fi
             
-            if grep -qx "$BRANCH" existing_branches.txt; then 
+            if grep -qx "$BRANCH" /tmp/existing_branches.txt; then 
               echo "Skip: $BRANCH sudah ada."
               continue; 
             fi
@@ -59,9 +59,9 @@ jobs:
             TEMP_DIR="temp_$BRANCH"
             mkdir -p "$TEMP_DIR"
 
-            gh api repos/$PUBLIC_REPO/contents/?ref=$BRANCH --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name' > files_to_download.txt
+            gh api repos/$PUBLIC_REPO/contents/?ref=$BRANCH --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name' > /tmp/files_to_download.txt
 
-            if [ ! -s files_to_download.txt ]; then
+            if [ ! -s /tmp/files_to_download.txt ]; then
               echo "Tidak ada file .lua atau .manifest di branch $BRANCH"
               rm -rf "$TEMP_DIR"
               continue
@@ -78,16 +78,16 @@ jobs:
               else
                 echo "Gagal download: $FILE_NAME (Status: $HTTP_STATUS)"
               fi
-            done < files_to_download.txt
+            done < /tmp/files_to_download.txt
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              # Buat branch baru orphan
               git checkout --orphan "$BRANCH"
               git rm -rf . --quiet
               
               mv "$TEMP_DIR"/* .
               
-              git add .
+              git add *.lua *.manifest
+              
               git commit -m "Add files for $BRANCH" --quiet
               git push target_repo "$BRANCH" --force
               
@@ -98,4 +98,4 @@ jobs:
             git checkout main -f
             rm -rf "$TEMP_DIR"
             
-          done < public_branches.txt
+          done < /tmp/public_branches.txt
