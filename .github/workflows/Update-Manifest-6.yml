@@ -12,13 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      GH_TOKEN: ${{ secrets.MY_TOKEN }}
 
     steps:
       - name: Checkout Current Repo
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.MY_TOKEN }}
+          token: ${{ secrets.API_TOKEN }}
           fetch-depth: 0
 
       - name: Setup Git Config
@@ -28,6 +27,7 @@ jobs:
 
       - name: Sync and Push
         env:
+          GH_TOKEN: ${{ secrets.MY_TOKEN }}
           PUBLIC_REPO: ${{ secrets.REPO_MANUAL }}
           TARGET_REPO_PATH: ${{ secrets.REPO_MY }}
         run: |
