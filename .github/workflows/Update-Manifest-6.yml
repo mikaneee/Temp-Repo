@@ -10,7 +10,6 @@ concurrency:
 permissions:
   contents: write
   actions: write
-  workflows: write
 
 jobs:
   sync-process:
