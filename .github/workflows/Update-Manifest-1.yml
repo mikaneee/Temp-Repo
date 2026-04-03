@@ -87,7 +87,6 @@ jobs:
             TEMP_DIR="temp_my_$BRANCH"
             mkdir -p "$TEMP_DIR"
 
-            # Ambil daftar file .lua atau .manifest
             gh api repos/$PUBLIC_REPO/contents/?ref=$BRANCH --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name' > /tmp/files_to_download.txt
 
             if [ ! -s /tmp/files_to_download.txt ]; then
