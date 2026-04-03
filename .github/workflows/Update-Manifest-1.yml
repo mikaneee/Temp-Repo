@@ -102,14 +102,19 @@ jobs:
             done < /tmp/files_to_download.txt
 
             if [ "$DOWNLOAD_SUCCESS" = true ]; then
+              git branch -D "$BRANCH" 2>/dev/null || true
+              
               git checkout --orphan "$BRANCH"
               git rm -rf . --quiet
               mv "$TEMP_DIR"/* .
               find . -name "*.lua" -o -name "*.manifest" | xargs -r git add
               git commit -m "Sync $BRANCH" --quiet
-              git push target_my "$BRANCH" --force
+              
+              git push target_repo2 "$BRANCH" --force
               echo "Berhasil Push ke REPO2: $BRANCH"
             fi
+            
             git checkout main -f
+            git branch -D "$BRANCH" 2>/dev/null || true
             rm -rf "$TEMP_DIR"
           done < /tmp/public_branches.txt
