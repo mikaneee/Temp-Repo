@@ -35,8 +35,8 @@ jobs:
             
             gh api repos/$SOURCE_REPO/branches --paginate --jq '.[].name' | grep -E '^[0-9]+$' | sort > /tmp/source_branches.txt
             
-            gh api repos/$DEST_REPO/contents/ --ref $DEST_BRANCH --paginate --jq '.[] | select(.name | endswith(".zip")) | .name' | sed 's/\.zip//' | sort > /tmp/existing_zips.txt
-
+            gh api "repos/$DEST_REPO/contents/?ref=$DEST_BRANCH" --paginate --jq '.[] | select(.name | endswith(".zip")) | .name' | sed 's/\.zip//' | sort > /tmp/existing_zips.txt
+            
             DIFF=$(comm -23 /tmp/source_branches.txt /tmp/existing_zips.txt)
 
             if [ -z "$DIFF" ]; then
