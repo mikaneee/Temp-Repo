@@ -21,18 +21,6 @@ jobs:
           DEST_REPO: ${{ secrets.REPO_DEAPOT }}
           DEST_BRANCH: "data-deapot"
         run: |
-          START_TIME=$(date +%s)
-          LIMIT=$((5 * 3600))
-          ROOT_PATH=$(pwd)
-
-          while true; do
-            if [ $(($(date +%s) - START_TIME)) -ge $LIMIT ]; then
-              echo "Batas 5 jam tercapai. Restarting..."
-              break
-            fi
-
-            echo "--- Tahap 1: Sinkronisasi Index ---"
-            
             gh api repos/$SOURCE_REPO/branches --paginate --jq '.[].name' | grep -E '^[0-9]+$' | sort > /tmp/source_branches.txt
             
             gh api "repos/$DEST_REPO/contents/?ref=$DEST_BRANCH" --paginate --jq '.[] | select(.name | endswith(".zip")) | .name' | sed 's/\.zip//' | sort > /tmp/existing_zips.txt
@@ -41,7 +29,7 @@ jobs:
 
             if [ -z "$DIFF" ]; then
               echo "Status: Semua branch sudah tersinkron."
-              sleep 10
+              sleep 2
               continue
             fi
 
@@ -71,34 +59,27 @@ jobs:
                 rm -rf "temp_$id" "raw_$id.zip"
                 NEW_COUNT=$((NEW_COUNT + 1))
 
-                if [ $((NEW_COUNT % 100)) -eq 0 ]; then
+                if [ $((NEW_COUNT % 20)) -eq 0 ]; then
                   cd repo_dir
                   git add .
-                  git commit -m "Auto-Update"
-                  git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
-                  cd ..
-                  echo "Batch 100 file terkirim."
+                  if ! git diff --cached --quiet; then
+                    git commit -m "Auto-Update"
+                    git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
+                  fi
+                  cd "$ROOT_PATH"
                 fi
               fi
             done
 
-            cd repo_dir
-            git add .
-            if ! git diff --cached --quiet; then
-              git commit -m "Auto-Update"
-              git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
+            if [ -d "repo_dir" ]; then
+              cd repo_dir
+              git add .
+              if ! git diff --cached --quiet; then
+                echo "Melakukan push batch terakhir..."
+                git commit -m "Auto-Update"
+                git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
+              else
+                echo "Tidak ada perubahan fisik pada file. Skip commit."
+              fi
+              cd "$ROOT_PATH"
             fi
-            cd ..
-
-            echo "Putaran selesai. Melanjutkan scan..."
-            sleep 5
-          done
-
-      - name: Self Trigger Workflow
-        if: always()
-        run: |
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.API_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/sync-deapot.yml/dispatches" \
-            -d '{"ref":"main"}'
