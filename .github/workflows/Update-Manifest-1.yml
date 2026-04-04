@@ -1,4 +1,4 @@
-name: Sync Manifest 2
+name: Sync Manifest 1
 
 on:
   schedule:
