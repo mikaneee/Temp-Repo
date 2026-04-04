@@ -67,7 +67,6 @@ jobs:
               fi
             done
 
-            # 3. Push Batch
             if [ "$NEW_DATA" = true ]; then
               cd repo_dir
               git add *.zip
@@ -79,8 +78,6 @@ jobs:
               echo "Tidak ada data baru."
             fi
 
-            echo "Menunggu 5 menit..."
-            sleep 300
           done
 
       - name: Self Trigger Workflow
