@@ -9,7 +9,8 @@ jobs:
     steps:
       - name: Setup Environment
         run: |
-          sudo apt-get install jq zip -y
+          sudo apt-get update
+          sudo apt-get install jq zip unzip -y
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -21,12 +22,11 @@ jobs:
           DEST_BRANCH: "data-deapot"
         run: |
           START_TIME=$(date +%s)
-          LIMIT=$((5 * 3600)) # 5 Jam
+          LIMIT=$((5 * 3600))
 
           while true; do
-            CURRENT_TIME=$(date +%s)
-            if [ $((CURRENT_TIME - START_TIME)) -ge $LIMIT ]; then
-              echo "Batas 5 jam tercapai. Restarting..."
+            if [ $(($(date +%s) - START_TIME)) -ge $LIMIT ]; then
+              echo "Batas 5 jam tercapai. Berhenti..."
               break
             fi
 
@@ -35,48 +35,51 @@ jobs:
             SOURCE_BRANCHES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/$SOURCE_REPO/branches?per_page=100" | jq -r '.[].name' | grep -E '^[0-9]+$')
 
-            rm -rf dest_folder
-            git clone --depth 1 --branch $DEST_BRANCH https://$GITHUB_TOKEN@github.com/$DEST_REPO.git dest_folder
+            rm -rf repo_dir
+            git clone --depth 1 --branch $DEST_BRANCH https://$GITHUB_TOKEN@github.com/$DEST_REPO.git repo_dir
             
             NEW_DATA=false
-            cd dest_folder
+            
+            ROOT_PATH=$(pwd)
 
             for id in $SOURCE_BRANCHES; do
-              if [ -f "$id.zip" ]; then
+              if [ -f "repo_dir/$id.zip" ]; then
                 continue
               fi
 
-              echo "Processing Branch: $id (Lua + Manifests)"
-              
-              mkdir -p "temp_$id"
+              echo "Processing Branch: $id"
               
               curl -L -s -H "Authorization: token $GITHUB_TOKEN" \
-                -o "archive_$id.zip" \
+                -o "raw_$id.zip" \
                 "https://github.com/$SOURCE_REPO/archive/refs/heads/$id.zip"
 
-              if [ -f "archive_$id.zip" ]; then
-                unzip -q "archive_$id.zip" -d "temp_$id"
+              if [ -f "raw_$id.zip" ]; then
+                mkdir -p "temp_$id"
+                unzip -q "raw_$id.zip" -d "temp_$id"
                 
-                cd "temp_$id"/* zip -j "../../$id.zip" *.lua *.manifest 2>/dev/null || zip -j "../../$id.zip" *
-                cd ../../
+                cd "temp_$id"/*
+                zip -j "$ROOT_PATH/repo_dir/$id.zip" ./*
+                cd "$ROOT_PATH"
                 
-                rm -rf "temp_$id" "archive_$id.zip"
-                
-                git add "$id.zip"
                 NEW_DATA=true
+                
+                rm -rf "temp_$id" "raw_$id.zip"
               fi
             done
 
+            # 3. Push Batch
             if [ "$NEW_DATA" = true ]; then
-              git commit -m "Auto-Update)"
+              cd repo_dir
+              git add *.zip
+              git commit -m "Auto-Update"
               git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
-              echo "Berhasil push data baru."
+              cd ..
+              echo "Push berhasil."
             else
-              echo "Tidak ada branch baru."
+              echo "Tidak ada data baru."
             fi
 
-            cd ..
-            echo "Menunggu 5 menit untuk iterasi berikutnya..."
+            echo "Menunggu 5 menit..."
             sleep 300
           done
 
@@ -86,5 +89,5 @@ jobs:
           curl -X POST \
             -H "Authorization: token ${{ secrets.API_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/sync-deapot.yml/dispatches" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/sync-manifest.yml/dispatches" \
             -d '{"ref":"main"}'
