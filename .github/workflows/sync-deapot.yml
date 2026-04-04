@@ -4,80 +4,87 @@ on:
   workflow_dispatch:
 
 jobs:
-  archive-branches:
+  sync-process:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Destination Repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.REPO_DEAPOT }}
-          token: ${{ secrets.API_TOKEN }}
-          path: destination
-
-      - name: Sync Deapot
+      - name: Setup Environment
         run: |
-          START_TIME=$(date +%s)
-          LIMIT=$((5 * 3600))
-          
-          cd destination
-          mkdir -p data-deapot
-          
-          echo "Melakukan indexing file yang sudah ada..."
-          ls data-deapot | grep -E '^[0-9]+\.zip$' | sed 's/\.zip//' > existing_index.txt
-          echo "Ditemukan $(wc -l < existing_index.txt) file di deapot."
-
+          sudo apt-get install jq zip -y
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Run 5 Hours Sync Loop
+        env:
+          GITHUB_TOKEN: ${{ secrets.API_TOKEN }}
+          SOURCE_REPO: ${{ secrets.REPO_MY }}
+          DEST_REPO: ${{ secrets.REPO_DEAPOT }}
+          DEST_BRANCH: "data-deapot"
+        run: |
+          START_TIME=$(date +%s)
+          LIMIT=$((5 * 3600)) # 5 Jam
+
           while true; do
-            # Cek durasi
-            if [ $(($(date +%s) - START_TIME)) -ge $LIMIT ]; then
-              echo "Batas 5 jam tercapai. Berhenti..."
+            CURRENT_TIME=$(date +%s)
+            if [ $((CURRENT_TIME - START_TIME)) -ge $LIMIT ]; then
+              echo "Batas 5 jam tercapai. Restarting..."
               break
             fi
 
-            echo "Mengambil daftar branch dari source..."
-            BRANCHES=$(curl -s -H "Authorization: token ${{ secrets.API_TOKEN }}" \
-              "https://api.github.com/repos/${{ secrets.REPO_MY }}/branches?per_page=100" | jq -r '.[].name')
+            echo "--- Memulai Scan Branch ---"
+            
+            SOURCE_BRANCHES=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$SOURCE_REPO/branches?per_page=100" | jq -r '.[].name' | grep -E '^[0-9]+$')
 
-            NEW_FILES_COUNT=0
+            rm -rf dest_folder
+            git clone --depth 1 --branch $DEST_BRANCH https://$GITHUB_TOKEN@github.com/$DEST_REPO.git dest_folder
+            
+            NEW_DATA=false
+            cd dest_folder
 
-            for branch in $BRANCHES; do
-              if [[ "$branch" =~ ^[0-9]+$ ]]; then
+            for id in $SOURCE_BRANCHES; do
+              if [ -f "$id.zip" ]; then
+                continue
+              fi
+
+              echo "Processing Branch: $id (Lua + Manifests)"
+              
+              mkdir -p "temp_$id"
+              
+              curl -L -s -H "Authorization: token $GITHUB_TOKEN" \
+                -o "archive_$id.zip" \
+                "https://github.com/$SOURCE_REPO/archive/refs/heads/$id.zip"
+
+              if [ -f "archive_$id.zip" ]; then
+                unzip -q "archive_$id.zip" -d "temp_$id"
                 
-                if ! grep -qxw "$branch" existing_index.txt; then
-                  echo "Branch $branch belum ada. Mengunduh..."
-                  
-                  if curl -L -s -H "Authorization: token ${{ secrets.API_TOKEN }}" \
-                    -o "data-deapot/${branch}.zip" \
-                    "https://github.com/${{ secrets.REPO_MY }}/archive/refs/heads/${branch}.zip"; then
-                    
-                    echo "$branch" >> existing_index.txt
-                    git add "data-deapot/${branch}.zip"
-                    NEW_FILES_COUNT=$((NEW_FILES_COUNT + 1))
-                  fi
-                fi
+                cd "temp_$id"/* zip -j "../../$id.zip" *.lua *.manifest 2>/dev/null || zip -j "../../$id.zip" *
+                cd ../../
+                
+                rm -rf "temp_$id" "archive_$id.zip"
+                
+                git add "$id.zip"
+                NEW_DATA=true
               fi
             done
 
-            if [ $NEW_FILES_COUNT -gt 0 ]; then
-              echo "Ditemukan $NEW_FILES_COUNT file baru. Melakukan push..."
-              git commit -m "Auto Update"
-              git push origin main
+            if [ "$NEW_DATA" = true ]; then
+              git commit -m "Auto-Update)"
+              git push https://$GITHUB_TOKEN@github.com/$DEST_REPO.git $DEST_BRANCH
+              echo "Berhasil push data baru."
             else
-              echo "Tidak ada branch baru ditemukan."
+              echo "Tidak ada branch baru."
             fi
 
-            echo "Menunggu 2 menit sebelum scan ulang..."
-            sleep 120
+            cd ..
+            echo "Menunggu 5 menit untuk iterasi berikutnya..."
+            sleep 300
           done
 
-      - name: Restart Workflow
+      - name: Self Trigger Workflow
         if: always()
         run: |
-          echo "Memicu ulang script agar berjalan berkelanjutan..."
           curl -X POST \
             -H "Authorization: token ${{ secrets.API_TOKEN }}" \
             -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/sync-manifest-loop-5-hours-high-performance.yml/dispatches" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/sync-deapot.yml/dispatches" \
             -d '{"ref":"main"}'
