@@ -8,14 +8,12 @@ on:
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
-
+  
 jobs:
   sync-process:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      API_TOKEN: ${{ secrets.API_TOKEN }}
-      PUBLIC_REPO: ${{ secrets.REPO_LF }}
 
     steps:
       - name: Checkout Current Repo
@@ -29,92 +27,56 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch Public Branches
+      - name: Sync Update
         env:
           GH_TOKEN: ${{ secrets.API_TOKEN }}
-        run: |
-          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > /tmp/public_branches.txt
-          echo "Ditemukan $(wc -l < /tmp/public_branches.txt) branch di repo publik."
-
-      - name: Sync to Main Repo 1
-        env:
-          GH_TOKEN: ${{ secrets.API_TOKEN }}
+          PUBLIC_REPO: ${{ secrets.REPO_LF }}
           MAIN_REPO: ${{ secrets.MAIN_REPO }}
         run: |
-          echo "Memulai sinkronisasi ke: $MAIN_REPO"
-          git remote add target_repo1 "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
-          git fetch target_repo1 --prune
-          git branch -r | grep "target_repo1/" | sed 's/target_repo1\///' | tr -d ' ' | grep -v "HEAD" > /tmp/existing_repo1.txt
+          gh api repos/$PUBLIC_REPO/branches --paginate --jq '.[].name' > public_branches.txt
 
+          git remote add target_repo "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
+          git fetch target_repo --prune
+          git branch -r | grep "target_repo/" | sed 's/target_repo\///' | tr -d ' ' | grep -v "HEAD" > existing_branches.txt
+
+          LIMIT=100
+          COUNT=0
+          
           while IFS= read -r BRANCH; do
-            if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ]; then continue; fi
-            if grep -qx "$BRANCH" /tmp/existing_repo1.txt; then continue; fi
+            if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ] || [ $COUNT -ge $LIMIT ]; then continue; fi
+            
+            if grep -qx "$BRANCH" existing_branches.txt; then 
+              echo "Skip: $BRANCH sudah ada."
+              continue; 
+            fi
 
-            echo "Processing $BRANCH for $MAIN_REPO"
+            echo "Processing New Branch: $BRANCH"
             FILE_URL="https://raw.githubusercontent.com/$PUBLIC_REPO/$BRANCH/$BRANCH.lua"
-            TEMP_DIR="temp_repo1_$BRANCH"
+            
+            TEMP_DIR="temp_$BRANCH"
             mkdir -p "$TEMP_DIR"
             
             HTTP_STATUS=$(curl -s -L -o "$TEMP_DIR/$BRANCH.lua" -w "%{http_code}" "$FILE_URL")
+            
             if [ "$HTTP_STATUS" -eq 200 ]; then
+              # BUAT BRANCH BARU DARI KOSONG (ORPHAN)
               git checkout --orphan "$BRANCH"
               git rm -rf . --quiet
+              
               mv "$TEMP_DIR/$BRANCH.lua" .
               git add "$BRANCH.lua"
               git commit -m "Add $BRANCH.lua" --quiet
-              git push target_repo1 "$BRANCH" --force
-              echo "Berhasil Push ke REPO1: $BRANCH"
-            fi
-            git checkout main -f
-            rm -rf "$TEMP_DIR"
-          done < /tmp/public_branches.txt
-
-      - name: Sync to Main Repo 2
-        env:
-          GH_TOKEN: ${{ secrets.API_TOKEN }}
-          MAIN_REPO: ${{ secrets.REPO_MY }}
-        run: |
-          echo "Memulai sinkronisasi ke: $MAIN_REPO"
-          git remote add target_repo2 "https://x-access-token:${API_TOKEN}@github.com/${MAIN_REPO}.git"
-          git fetch target_repo2 --prune
-          git branch -r | grep "target_repo2/" | sed 's/target_repo2\///' | tr -d ' ' | grep -v "HEAD" > /tmp/existing_repo2.txt
-
-          while IFS= read -r BRANCH; do
-            if [ -z "$BRANCH" ] || [ "$BRANCH" == "main" ]; then continue; fi
-            if grep -qx "$BRANCH" /tmp/existing_repo2.txt; then continue; fi
-
-            echo "Processing $BRANCH for $MAIN_REPO"
-            TEMP_DIR="temp_repo2_$BRANCH"
-            mkdir -p "$TEMP_DIR"
-
-            gh api repos/$PUBLIC_REPO/contents/?ref=$BRANCH --jq '.[] | select(.name | endswith(".lua") or endswith(".manifest")) | .name' > /tmp/files_to_download.txt
-
-            if [ ! -s /tmp/files_to_download.txt ]; then
-              rm -rf "$TEMP_DIR"
-              continue
-            fi
-
-            DOWNLOAD_SUCCESS=false
-            while IFS= read -r FILE_NAME; do
-              FILE_URL="https://raw.githubusercontent.com/$PUBLIC_REPO/$BRANCH/$FILE_NAME"
-              HTTP_STATUS=$(curl -s -L -o "$TEMP_DIR/$FILE_NAME" -w "%{http_code}" "$FILE_URL")
-              [ "$HTTP_STATUS" -eq 200 ] && DOWNLOAD_SUCCESS=true
-            done < /tmp/files_to_download.txt
-
-            if [ "$DOWNLOAD_SUCCESS" = true ]; then
-              git branch -D "$BRANCH" 2>/dev/null || true
+              git push target_repo "$BRANCH" --force
               
-              git checkout --orphan "$BRANCH"
-              git rm -rf . --quiet
-              mv "$TEMP_DIR"/* .
-              find . -name "*.lua" -o -name "*.manifest" | xargs -r git add
-              git commit -m "Sync $BRANCH" --quiet
-              
-              git push target_repo2 "$BRANCH" --force
-              echo "Berhasil Push ke REPO2: $BRANCH"
+              COUNT=$((COUNT+1))
+              echo "Berhasil Push: $BRANCH"
+            else
+              echo "Gagal download: $BRANCH (Status: $HTTP_STATUS)"
             fi
             
             git checkout main -f
-            git branch -D "$BRANCH" 2>/dev/null || true
             rm -rf "$TEMP_DIR"
-          done < /tmp/public_branches.txt
+            
+          done < public_branches.txt
+
+          
